@@ -13,6 +13,8 @@ Adds **new releases only** to an artist playlist (matches playlist name to artis
 
 Credentials in `.env` (see `.env.example`). First run opens browser for Spotify login.
 
+`run.sh` upgrades pip and installs dependencies automatically on each run.
+
 ## What it does
 
 1. Finds playlist named like the artist (or creates one)

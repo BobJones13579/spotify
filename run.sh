@@ -3,6 +3,7 @@
 set -e
 cd "$(dirname "$0")"
 source venv/bin/activate
+python -m pip install --upgrade pip -q
 pip install -q -r requirements.txt
 
 if [[ "${1:-}" == "test" ]]; then
