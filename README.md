@@ -8,6 +8,7 @@ Adds **new releases only** to an artist playlist (matches playlist name to artis
 ./run.sh                  # ARTIST_NAME in src/artist_playlist_ai.py
 ./run.sh "The Script"
 ./run.sh batch            # edit ARTISTS list first
+./run.sh test             # run unit tests
 ```
 
 Credentials in `.env` (see `.env.example`). First run opens browser for Spotify login.

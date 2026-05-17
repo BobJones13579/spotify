@@ -178,8 +178,6 @@ def get_latest_release_date_from_playlist(sp, playlist_id) -> str | None:
     from date_utils import parse_release_date
 
     items = get_playlist_tracks_all(sp, playlist_id)
-    log(f"Playlist has {len(items)} tracks")
-
     latest = None
     latest_parsed = None
     for item in items:
@@ -190,19 +188,14 @@ def get_latest_release_date_from_playlist(sp, playlist_id) -> str | None:
             if latest_parsed is None or parsed > latest_parsed:
                 latest_parsed = parsed
                 latest = raw
-
-    if latest:
-        log(f"Newest release on playlist: {latest}")
     return latest
 
 
 def get_or_create_playlist(sp, artist_name):
-    log(f"Looking for playlist: {artist_name}")
     playlists = sp.current_user_playlists(limit=50)
     while playlists:
         for pl in playlists["items"]:
             if pl["name"].lower() == artist_name.lower():
-                log(f"Using existing playlist: {pl['name']}")
                 return pl["id"], True
         if playlists.get("next"):
             playlists = sp.next(playlists)
@@ -210,7 +203,6 @@ def get_or_create_playlist(sp, artist_name):
             break
 
     me = sp.me()
-    log(f"Creating playlist: {artist_name}")
     playlist = safe_spotify_call(
         sp.user_playlist_create,
         me["id"],
