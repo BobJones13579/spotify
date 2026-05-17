@@ -1,59 +1,31 @@
-# Spotify Playlist Creator
+# Spotify Playlist Updater
 
-Adds an artist's full discography to a Spotify playlist. You curate in Spotify afterward (remove what you don't want).
+Adds **new releases only** to an artist playlist (matches playlist name to artist name). Curate in Spotify after.
 
-## Quick start
-
-1. **Credentials** — copy `.env.example` to `.env` and add your [Spotify app](https://developer.spotify.com/dashboard) Client ID and Secret.
-
-2. **Run** — edit `ARTIST_NAME` in `src/artist_playlist_ai.py`, then:
+## Run
 
 ```bash
-./run.sh
+./run.sh                  # ARTIST_NAME in src/artist_playlist_ai.py
+./run.sh "The Script"
+./run.sh batch            # edit ARTISTS list first
 ```
 
-Or pass an artist name:
+Credentials in `.env` (see `.env.example`). First run opens browser for Spotify login.
 
-```bash
-./run.sh "Taylor Swift"
-```
+## What it does
 
-Batch (edit `ARTISTS` in `src/artist_playlist_ai.py`):
+1. Finds playlist named like the artist (or creates one)
+2. Finds newest release date already on the playlist
+3. Adds tracks from releases **after** that date
+4. Light filters: skips skits/intros/karaoke, very short/long, unplayable tracks
 
-```bash
-./run.sh batch
-```
-
-First run opens a browser for Spotify login. Your token is cached in `.cache/` (gitignored).
-
-## Filtering (default: minimal)
-
-| Filter | Default |
-|--------|---------|
-| Popularity | **Off** — adds almost everything |
-| Manual | Skips intros/skits/karaoke/live venue recordings |
-| Quality | Skips &lt;1 min, &gt;10 min, unplayable tracks |
-| Duplicates | Skips exact same track name in one run |
-
-Turn popularity filtering on in `.env`:
+## Layout
 
 ```
-ENABLE_POPULARITY_FILTER=true
+src/artist_playlist_ai.py   # main — set ARTIST_NAME here
+src/spotify_client.py
+src/track_filtering.py
+src/config.py
 ```
 
-## Project layout
-
-```
-spotify-playlist-app/
-├── .env              # your API keys (not in git)
-├── run.sh            # run this
-├── requirements.txt
-└── src/
-    ├── artist_playlist_ai.py   # main script — set ARTIST_NAME here
-    ├── spotify_client.py
-    ├── track_filtering.py
-    ├── progress_utils.py
-    └── config.py
-```
-
-Repo: https://github.com/BobJones13579/spotify
+https://github.com/BobJones13579/spotify
