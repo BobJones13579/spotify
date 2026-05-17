@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Secrets and local config
+.env
+.env.local
+.cache/
+
+# Progress / resume files (per-artist, local only)
+progress_*.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
