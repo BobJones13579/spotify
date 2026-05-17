@@ -1,15 +1,14 @@
-"""
-Configuration settings for the AI-Enhanced Spotify Playlist Creator.
-
-This module contains all configuration parameters for the application,
-including Spotify API credentials, AI settings, and filtering thresholds.
-
-Author: Generated with AI assistance
-Version: 2.0 (Streamlit App)
-"""
+"""Configuration for the Spotify playlist creator."""
 
 import os
+from pathlib import Path
 from typing import List, Optional
+
+from dotenv import load_dotenv
+
+# Load .env from project root (parent of src/)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(_PROJECT_ROOT / ".env")
 
 # ============================================================================
 # SPOTIFY API CONFIGURATION
@@ -57,12 +56,14 @@ AVAILABLE_AI_MODELS = [
 # POPULARITY FILTERING
 # ============================================================================
 
-# Popularity Thresholds
-MIN_POPULARITY_THRESHOLD = 5  # Minimum popularity score (0-100) to include track
-POPULARITY_RATIO_THRESHOLD = 0.01  # Track must have at least 1% of album's max popularity
+# Popularity filtering (off by default — add tracks, curate in Spotify)
+ENABLE_POPULARITY_FILTER = os.getenv("ENABLE_POPULARITY_FILTER", "false").lower() in (
+    "true", "1", "yes", "on"
+)
+MIN_POPULARITY_THRESHOLD = int(os.getenv("MIN_POPULARITY_THRESHOLD", "5"))
+POPULARITY_RATIO_THRESHOLD = float(os.getenv("POPULARITY_RATIO_THRESHOLD", "0.01"))
 
-# Logging Settings
-LOG_POPULARITY_DECISIONS = True  # Log popularity filtering decisions
+LOG_POPULARITY_DECISIONS = False
 LOG_AI_DECISIONS = True  # Log AI decision reasoning
 
 # ============================================================================
@@ -124,10 +125,6 @@ def validate_config() -> List[str]:
     
     if not SPOTIFY_CLIENT_SECRET or SPOTIFY_CLIENT_SECRET == "your_client_secret_here":
         errors.append("SPOTIFY_CLIENT_SECRET is not set")
-    
-    # Validate AI model
-    if AI_MODEL not in AVAILABLE_AI_MODELS:
-        errors.append(f"AI_MODEL '{AI_MODEL}' is not in available models: {AVAILABLE_AI_MODELS}")
     
     # Validate popularity thresholds
     if not 0 <= MIN_POPULARITY_THRESHOLD <= 100:

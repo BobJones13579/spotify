@@ -7,11 +7,14 @@ and quality checks.
 
 from datetime import datetime, date
 
-# Conservative Popularity Filtering (reduces false positives while still filtering unpopular tracks)
-MIN_POPULARITY_THRESHOLD = 10   # Lower threshold for albums/compilations (more conservative)
-SINGLE_POPULARITY_THRESHOLD = 15  # Lower threshold for singles (more conservative)
-POPULARITY_RATIO_THRESHOLD = 0.10  # Album tracks must have at least 10% of album's max popularity (more conservative)
-LOG_POPULARITY_DECISIONS = True  # Log popularity filtering decisions
+from config import (
+    ENABLE_POPULARITY_FILTER,
+    MIN_POPULARITY_THRESHOLD,
+    POPULARITY_RATIO_THRESHOLD,
+    LOG_POPULARITY_DECISIONS,
+)
+
+SINGLE_POPULARITY_THRESHOLD = 5  # Only used when ENABLE_POPULARITY_FILTER is True
 
 # Conservative time adjustment multipliers for new releases
 NEW_SONG_BOOST_30_DAYS = 1.2    # +20% boost for songs < 30 days old (more conservative)
@@ -75,20 +78,15 @@ def analyze_track_popularity(track, album_tracks, album_name, album_type, album_
     """
     Analyze track popularity using our custom scoring system.
     
-    Args:
-        track: Full track object from Spotify
-        album_tracks: List of all tracks in the album
-        album_name: Name of the album
-        album_type: Type of album (album, single, compilation)
-        album_track_details: Pre-fetched track details to avoid API calls
-        
     Returns:
         tuple: (should_skip, reason, custom_score)
     """
-    
     custom_score, spotify_popularity, release_date, days_since_release = calculate_custom_popularity_score(
         track, album_tracks, album_name, album_type
     )
+
+    if not ENABLE_POPULARITY_FILTER:
+        return False, "Popularity filter disabled", custom_score
     
     if album_type == 'album':
         # For albums, use relative popularity (must be at least X% of album's max)
@@ -139,12 +137,6 @@ def should_skip_track_manual(track_name: str, album_name: str, artist_name: str)
     
     track_lower = track_name.lower()
     
-    # Check for acoustic songs (user preference)
-    acoustic_indicators = ['acoustic', 'unplugged', 'stripped']
-    for indicator in acoustic_indicators:
-        if indicator in track_lower:
-            return True, f"Manual: Acoustic version - {indicator}"
-    
     # Check for obvious non-songs (keep soundtracks, remasters, EPs, etc.)
     non_song_indicators = [
         'intro', 'outro', 'skit', 'interlude', 'spoken word', 'instrumental',
@@ -193,10 +185,9 @@ def should_skip_low_quality_track(track: dict) -> tuple[bool, str]:
     if duration_seconds > 600:  # More than 10 minutes
         return True, f"Quality: Too long ({duration_seconds/60:.1f}min) - likely extended version"
     
-    # Check if track is available in your market (skip unplayable tracks)
-    available_markets = track.get('available_markets', [])
-    if not available_markets:  # No markets available
-        return True, "Quality: Not available in your market - can't play it"
+    # Skip only when Spotify explicitly marks the track unplayable
+    if track.get('is_playable') is False:
+        return True, "Quality: Not playable in your market"
     
     # Keep explicit content (user preference: don't filter explicit vs clean)
     

@@ -1,21 +1,11 @@
 #!/usr/bin/env python3
 """
-AI-Optimized Spotify Playlist Creator
+Spotify Playlist Creator — add an artist's discography to a playlist, then curate in Spotify.
 
-Creates comprehensive Spotify playlists for artists using AI-optimized processing
-to handle large discographies without rate limiting issues.
-
-Features:
-- Intelligent progress persistence and resume capability
-- Adaptive rate limiting with exponential backoff
-- Batch API optimization and smart error recovery
-- Advanced popularity filtering with time-based adjustments
-- Comprehensive discography processing (albums, singles, compilations)
-
-Usage:
-- python artist_playlist_ai.py        # Single artist
-- python artist_playlist_ai.py batch  # Multiple artists
-- python artist_playlist_ai.py undo   # Remove tracks from last run
+Usage (from project root):
+  ./run.sh                    # uses ARTIST_NAME below
+  ./run.sh batch              # uses ARTISTS list below
+  python artist_playlist_ai.py "Artist Name"
 """
 
 import sys
@@ -26,18 +16,15 @@ from datetime import datetime, date
 # Import our modular components
 from spotify_client import (
     get_spotify_client, get_artist_with_retry, get_albums_with_retry,
-    get_tracks_with_retry, get_track_details_batch, get_audio_features_batch,
-    get_or_create_playlist, get_latest_release_date_from_playlist, 
+    get_tracks_with_retry, get_track_details_batch,
+    get_or_create_playlist, get_latest_release_date_from_playlist,
     add_tracks_to_playlist_with_retry, get_playlist_tracks_with_retry, log
 )
 from track_filtering import (
     analyze_track_popularity, should_skip_track_manual, should_skip_low_quality_track,
-    should_skip_duplicate_track
 )
 from progress_utils import save_progress, load_progress, ai_estimate_processing_time
-from streams_estimator import estimate_lifetime_streams, format_stream_count, get_stream_quality_tier
-from lastfm_client import get_track_info_batch, set_lastfm_api_key
-from config import LASTFM_API_KEY
+from config import ENABLE_POPULARITY_FILTER, validate_config
 
 # ============================================================================
 # 🎯 CONFIGURATION - EDIT THESE SETTINGS HERE!
@@ -46,8 +33,8 @@ from config import LASTFM_API_KEY
 # 🎵 CHANGE THIS TO CREATE PLAYLISTS FOR DIFFERENT ARTISTS
 ARTIST_NAME = "Air Supply"
 
-# 👉 Batch mode - uncomment to process multiple artists - python artist_playlist_ai_refactored.py batch
-# ARTISTS = ["Bruno Mars", "Taylor Swift", "Billie Eilish"]
+# Batch mode: ./run.sh batch
+ARTISTS = []  # e.g. ["Taylor Swift", "Bruno Mars"]
 
 # Re-evaluation settings
 RE_EVALUATE_DAYS = 90  # Re-evaluate releases from last 90 days for popularity changes
@@ -65,9 +52,6 @@ BATCH_SIZE_TRACKS = 50  # Maximum tracks per batch request
 ADAPTIVE_DELAY_BASE = 0.2  # Base delay that adapts based on API response
 PROGRESS_SAVE_INTERVAL = 5  # Save progress every N albums processed
 
-# Last.fm integration (optional - set API key in config.py)
-USE_LASTFM = True  # Set to False to disable Last.fm integration
-
 # ============================================================================
 # MAIN PROCESSING
 # ============================================================================
@@ -75,22 +59,12 @@ USE_LASTFM = True  # Set to False to disable Last.fm integration
 def process_artist(artist_name, sp=None):
     """Process a single artist and create/update their playlist."""
     
-    # Debug: Log the artist name being processed
-    log(f"🎯 Processing artist: '{artist_name}' (type: {type(artist_name)})")
-    
     if sp is None:
         sp = get_spotify_client()
-    
-    # Initialize Last.fm API if configured
-    if USE_LASTFM and LASTFM_API_KEY:
-        set_lastfm_api_key(LASTFM_API_KEY)
-        log(f"🎵 Building playlist for: {artist_name}")
-        log(f"⚙️  Using manual filtering + Last.fm data (enhanced accuracy)")
-    else:
-        log(f"🎵 Building playlist for: {artist_name}")
-        log(f"⚙️  Using manual filtering (fast, reliable)")
-        if USE_LASTFM:
-            log(f"⚠️  Last.fm integration disabled - set LASTFM_API_KEY in config.py to enable")
+
+    log(f"🎵 Building playlist for: {artist_name}")
+    filter_mode = "light manual only" if not ENABLE_POPULARITY_FILTER else "manual + popularity"
+    log(f"⚙️  Filtering: {filter_mode}")
     
     # Find artist
     log(f"Searching for artist: {artist_name}")
@@ -245,41 +219,12 @@ def process_artist(artist_name, sp=None):
         track_ids = [track['id'] for track in tracks['items']]
         track_details = get_track_details_batch(sp, track_ids, BATCH_SIZE_TRACKS)
         
-        # Try to get audio features, but don't fail if we can't (some API plans don't include this)
-        try:
-            audio_features = get_audio_features_batch(sp, track_ids, BATCH_SIZE_TRACKS)
-        except Exception as e:
-            log(f"     ⚠️  Audio features unavailable (continuing without them): {str(e)[:100]}...")
-            audio_features = [None] * len(track_ids)  # Create empty list to maintain order
-        
-        # Create mappings for efficient lookup
-        track_details_map = {}
-        audio_features_map = {}
-        for j, track_id in enumerate(track_ids):
-            if j < len(track_details) and track_details[j]:
-                track_details_map[track_id] = track_details[j]
-            if j < len(audio_features) and audio_features[j]:
-                audio_features_map[track_id] = audio_features[j]
-        
-        # 🎵 Get Last.fm data for better streams estimation (optional)
-        lastfm_data_map = {}
-        if USE_LASTFM:
-            try:
-                # Prepare artist-track pairs for Last.fm lookup
-                artist_track_pairs = []
-                for track in tracks['items']:
-                    track_name = track['name']
-                    artist_name = track['artists'][0]['name'] if track['artists'] else artist_name
-                    artist_track_pairs.append((artist_name, track_name))
-                
-                # Get Last.fm data in batch
-                lastfm_data_map = get_track_info_batch(artist_track_pairs)
-                log(f"     🎵 Retrieved Last.fm data for {len(lastfm_data_map)} tracks")
-                
-            except Exception as e:
-                log(f"     ⚠️  Last.fm integration failed: {e}")
-                lastfm_data_map = {}
-        
+        track_details_map = {
+            track_id: track_details[j]
+            for j, track_id in enumerate(track_ids)
+            if j < len(track_details) and track_details[j]
+        }
+
         for track in tracks['items']:
             track_name = track['name']
             track_id = track['id']
@@ -291,11 +236,7 @@ def process_artist(artist_name, sp=None):
             # 🎯 STEP 0: Quality check first (fastest filter)
             should_skip_quality, quality_reason = should_skip_low_quality_track(full_track)
             if should_skip_quality:
-                duration_ms = full_track.get('duration_ms', 0)
-                duration_seconds = duration_ms / 1000
-                available_markets = len(full_track.get('available_markets', []))
-                log(f"     ⏭️  Skipped (quality): {track_name} - {quality_reason}")
-                log(f"        📊 Track details: {duration_seconds:.1f}s duration, {available_markets} markets available")
+                log(f"     ⏭️  Skipped (quality): {track_name} — {quality_reason}")
                 continue
             
             # 📊 STEP 1: Analyze popularity first (smart filtering based on album type)
@@ -304,20 +245,7 @@ def process_artist(artist_name, sp=None):
             )
             
             if should_skip_popularity:
-                # Enhanced logging with threshold details
-                if album_type == 'album':
-                    threshold = 10  # MIN_POPULARITY_THRESHOLD
-                    ratio_threshold = 0.10  # POPULARITY_RATIO_THRESHOLD
-                    log(f"     ⏭️  Skipped (unpopular): {track_name} - {popularity_reason}")
-                    log(f"        📊 Album track: {actual_popularity:.1f}/100 popularity, min threshold: {threshold}, ratio threshold: {ratio_threshold:.1%}")
-                elif album_type == 'single':
-                    threshold = 15  # SINGLE_POPULARITY_THRESHOLD
-                    log(f"     ⏭️  Skipped (unpopular): {track_name} - {popularity_reason}")
-                    log(f"        📊 Single: {actual_popularity:.1f}/100 popularity, min threshold: {threshold}")
-                else:  # compilation
-                    threshold = 10  # MIN_POPULARITY_THRESHOLD
-                    log(f"     ⏭️  Skipped (unpopular): {track_name} - {popularity_reason}")
-                    log(f"        📊 Compilation: {actual_popularity:.1f}/100 popularity, min threshold: {threshold}")
+                log(f"     ⏭️  Skipped (unpopular): {track_name} — {popularity_reason}")
                 popularity_skipped += 1
                 continue
             
@@ -337,55 +265,10 @@ def process_artist(artist_name, sp=None):
                 duplicates_skipped += 1
                 continue
             
-            # 🎵 STEP 4: Estimate lifetime streams for better decision making
-            track_audio_features = audio_features_map.get(track_id)
-            track_artist = track['artists'][0]['name'] if track['artists'] else artist_name
-            lastfm_data = lastfm_data_map.get((track_artist, track_name))
-            estimated_streams = estimate_lifetime_streams(full_track, track_audio_features, lastfm_data)
-            stream_quality = get_stream_quality_tier(estimated_streams)
-            formatted_streams = format_stream_count(estimated_streams)
-            
-            # ✅ STEP 5: Track passed all filters
             track_uris.append(track['uri'])
             track_names_seen.add(track_name)
-            
-            # Enhanced logging with detailed streams estimation reasoning
-            days_since_release = (today - album_date).days
-            
-            # Show estimation method and reasoning
-            estimation_method = "Last.fm" if (lastfm_data and lastfm_data.get('found') and lastfm_data.get('playcount', 0) > 0) else "Spotify popularity"
-            lastfm_info = f" (Last.fm: {lastfm_data['playcount']:,} plays)" if (lastfm_data and lastfm_data.get('found')) else ""
-            
-            # Show quality tier thresholds for context
-            tier_thresholds = {
-                'low': 0,
-                'decent': 100000,      # 100K+
-                'popular': 1000000,    # 1M+
-                'hit': 10000000        # 10M+
-            }
-            
-            current_tier_threshold = tier_thresholds.get(stream_quality, 0)
-            next_tier_threshold = tier_thresholds.get({
-                'low': 'decent',
-                'decent': 'popular', 
-                'popular': 'hit',
-                'hit': 'hit'
-            }.get(stream_quality, 'hit'), 0)
-            
-            if days_since_release <= RE_EVALUATE_DAYS:
-                log(f"     🔄 Re-added (now popular): {track_name}")
-                log(f"        📊 Popularity: {actual_popularity:.1f}/100, ~{formatted_streams} streams ({estimation_method}){lastfm_info}")
-                log(f"        🎯 Quality: {stream_quality} tier (threshold: {current_tier_threshold:,}+), released {days_since_release} days ago")
-                if next_tier_threshold > current_tier_threshold:
-                    needed_for_next = next_tier_threshold - estimated_streams
-                    log(f"        📈 Would need +{format_stream_count(needed_for_next)} streams for next tier")
-            else:
-                log(f"     ✓ Added: {track_name}")
-                log(f"        📊 Popularity: {actual_popularity:.1f}/100, ~{formatted_streams} streams ({estimation_method}){lastfm_info}")
-                log(f"        🎯 Quality: {stream_quality} tier (threshold: {current_tier_threshold:,}+)")
-                if next_tier_threshold > current_tier_threshold:
-                    needed_for_next = next_tier_threshold - estimated_streams
-                    log(f"        📈 Would need +{format_stream_count(needed_for_next)} streams for next tier")
+            pop = full_track.get('popularity', 0)
+            log(f"     ✓ Added: {track_name} (popularity {pop}/100)")
         
         # Mark album as processed
         processed_albums.append(album)
@@ -440,13 +323,7 @@ def process_artist(artist_name, sp=None):
     log(f"   • ⏭️  Skipped {popularity_skipped} tracks (too unpopular)")
     log(f"   • ⏭️  Skipped {duplicates_skipped} tracks (duplicates)")
     log(f"")
-    log(f"📋 FILTERING THRESHOLDS USED:")
-    log(f"   • Album tracks: min {10} popularity, {0.10:.1%} of album max")
-    log(f"   • Singles: min {15} popularity")
-    log(f"   • Compilations: min {10} popularity")
-    log(f"   • Quality tiers: Low (<100K), Decent (100K+), Popular (1M+), Hit (10M+)")
-    log(f"   • Track duration: 60s - 600s (1min - 10min)")
-    log(f"   • Age-based estimation: Last.fm for >6yr songs, Spotify popularity for newer")
+    log(f"   • Popularity filter: {'on' if ENABLE_POPULARITY_FILTER else 'off (curate in Spotify)'}")
 
     # Add tracks to playlist
     if track_uris:
@@ -472,15 +349,29 @@ def process_artist(artist_name, sp=None):
 
 def main():
     """Main function to handle command line arguments."""
-    import sys
-    
+    errors = validate_config()
+    if errors:
+        log("❌ Missing Spotify credentials. Copy .env.example to .env and add your API keys.")
+        for err in errors:
+            log(f"   - {err}")
+        sys.exit(1)
+
+    try:
+        sp = get_spotify_client()
+        me = sp.current_user()
+        log(f"✅ Signed in to Spotify as: {me['display_name']}")
+    except Exception as e:
+        log(f"❌ Could not connect to Spotify: {e}")
+        log("   Check .env credentials and complete the browser login if prompted.")
+        sys.exit(1)
+
     if len(sys.argv) > 1:
         command = sys.argv[1].lower()
-        
+
         if command == "batch":
             log("🚀 Starting batch processing...")
-            if 'ARTISTS' in globals() and globals().get('ARTISTS'):
-                for artist in globals()['ARTISTS']:
+            if ARTISTS:
+                for artist in ARTISTS:
                     try:
                         process_artist(artist)
                         log(f"✅ Completed: {artist}")
@@ -490,24 +381,25 @@ def main():
                         log(f"❌ Failed to process {artist}: {e}")
                         continue
             else:
-                log("❌ ARTISTS list not defined. Please uncomment and configure the ARTISTS list.")
+                log("❌ ARTISTS list is empty. Edit ARTISTS in artist_playlist_ai.py")
             return
-                
+
         elif command == "undo":
-            log("🔄 Undo functionality not implemented yet")
+            log("🔄 Undo not implemented yet")
             return
-            
+
         else:
-            log(f"❌ Unknown command: {command}")
-            log("Available commands: batch, undo")
+            # Treat first arg as artist name: python artist_playlist_ai.py "Taylor Swift"
+            artist = " ".join(sys.argv[1:])
+            log(f"🎵 Processing artist: {artist}")
+            process_artist(artist)
             return
     else:
-        # Single artist mode - use configured artist
-        if 'ARTIST_NAME' in globals() and ARTIST_NAME:
+        if ARTIST_NAME:
             log(f"🎵 Processing artist: {ARTIST_NAME}")
             process_artist(ARTIST_NAME)
         else:
-            log("❌ ARTIST_NAME not defined. Please configure ARTIST_NAME.")
+            log("❌ Set ARTIST_NAME in artist_playlist_ai.py or pass an artist on the command line.")
             return
 
 if __name__ == "__main__":

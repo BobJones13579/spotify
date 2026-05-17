@@ -15,6 +15,7 @@ env/
 .env
 .env.local
 .cache/
+**/.cache/
 
 # Progress / resume files (per-artist, local only)
 progress_*.json
