@@ -13,6 +13,7 @@ import time
 from datetime import datetime
 
 from config import INCLUDE_ALBUM_TYPES, validate_config
+from date_utils import is_after_cutoff
 from progress_utils import estimate_remaining_time, load_progress, save_progress
 from spotify_client import (
     add_tracks_to_playlist_with_retry,
@@ -20,7 +21,7 @@ from spotify_client import (
     get_artist_with_retry,
     get_latest_release_date_from_playlist,
     get_or_create_playlist,
-    get_playlist_track_names,
+    get_playlist_track_uris,
     get_spotify_client,
     get_track_details_batch,
     get_tracks_with_retry,
@@ -55,14 +56,14 @@ def process_artist(artist_name: str, sp=None) -> None:
     playlist_id, playlist_exists = get_or_create_playlist(sp, artist_name)
 
     latest_existing_date = None
-    track_names_seen: set[str] = set()
+    playlist_uris: set[str] = set()
 
     if playlist_exists:
         latest_existing_date = get_latest_release_date_from_playlist(sp, playlist_id)
-        track_names_seen = get_playlist_track_names(sp, playlist_id)
+        playlist_uris = get_playlist_track_uris(sp, playlist_id)
         if latest_existing_date:
-            log(f"Refresh mode — only releases after {latest_existing_date}")
-            log(f"Skipping {len(track_names_seen)} track names already on playlist")
+            log(f"Refresh mode — releases after {latest_existing_date}")
+            log(f"{len(playlist_uris)} tracks already on playlist (by URI)")
         else:
             log("Could not read playlist dates — may add duplicates")
 
@@ -82,8 +83,9 @@ def process_artist(artist_name: str, sp=None) -> None:
         return
 
     track_uris: list[str] = progress["track_uris"] if progress else []
+    uris_seen: set[str] = set(playlist_uris)
     if progress:
-        track_names_seen |= set(progress["track_names_seen"])
+        uris_seen |= set(progress["track_uris"])
 
     manual_skipped = 0
     quality_skipped = 0
@@ -96,7 +98,7 @@ def process_artist(artist_name: str, sp=None) -> None:
         album_name = album.get("name", "Unknown")
         album_type = album.get("album_type", "album")
 
-        if latest_existing_date and album_date <= latest_existing_date:
+        if latest_existing_date and not is_after_cutoff(album_date, latest_existing_date):
             continue
 
         releases_added += 1
@@ -126,12 +128,13 @@ def process_artist(artist_name: str, sp=None) -> None:
                 manual_skipped += 1
                 continue
 
-            if name in track_names_seen:
+            uri = track["uri"]
+            if uri in uris_seen:
                 duplicate_skipped += 1
                 continue
 
-            track_uris.append(track["uri"])
-            track_names_seen.add(name)
+            track_uris.append(uri)
+            uris_seen.add(uri)
             added_this_album += 1
             log(f"  + {name}")
 
@@ -141,7 +144,7 @@ def process_artist(artist_name: str, sp=None) -> None:
         processed_ids.add(album["id"])
 
         if i % PROGRESS_SAVE_EVERY == 0:
-            save_progress(artist_name, list(processed_ids), track_uris, track_names_seen)
+            save_progress(artist_name, list(processed_ids), track_uris, list(uris_seen))
 
         if i % 5 == 0 and i < len(albums):
             eta = estimate_remaining_time(len(albums), i, start_time)
@@ -161,7 +164,7 @@ def process_artist(artist_name: str, sp=None) -> None:
     if quality_skipped:
         log(f"Skipped (quality): {quality_skipped}")
     if duplicate_skipped:
-        log(f"Skipped (duplicate name): {duplicate_skipped}")
+        log(f"Skipped (already on playlist): {duplicate_skipped}")
 
     if to_add:
         log(f"Adding {len(to_add)} tracks to playlist...")

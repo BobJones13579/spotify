@@ -71,8 +71,37 @@ def get_spotify_client():
     )
 
 
+def resolve_artist(sp, artist_name: str) -> dict | None:
+    """
+    Find the correct artist — exact name match first, then highest popularity.
+    (artist:Sia wrongly returns 'Artists Against' as the first hit.)
+    """
+    queries = [f'artist:"{artist_name}"', artist_name]
+    items = []
+    seen_ids = set()
+
+    for q in queries:
+        results = safe_spotify_call(sp.search, q=q, type="artist", limit=20)
+        for artist in results["artists"]["items"]:
+            if artist["id"] not in seen_ids:
+                seen_ids.add(artist["id"])
+                items.append(artist)
+        if items:
+            break
+
+    if not items:
+        return None
+
+    target = artist_name.strip().lower()
+    exact = [a for a in items if a["name"].strip().lower() == target]
+    if exact:
+        return max(exact, key=lambda a: a.get("popularity", 0))
+    return max(items, key=lambda a: a.get("popularity", 0))
+
+
 def get_artist_with_retry(sp, artist_name):
-    return safe_spotify_call(sp.search, q=f"artist:{artist_name}", type="artist", limit=1)
+    artist = resolve_artist(sp, artist_name)
+    return {"artists": {"items": [artist] if artist else []}}
 
 
 def get_albums_with_retry(sp, artist_id, album_types):
@@ -100,7 +129,16 @@ def get_albums_with_retry(sp, artist_id, album_types):
 
 
 def get_tracks_with_retry(sp, album_id):
-    return safe_spotify_call(sp.album_tracks, album_id, limit=50)
+    """All tracks on an album (paginated — some albums exceed 50 tracks)."""
+    all_items = []
+    offset = 0
+    while True:
+        page = safe_spotify_call(sp.album_tracks, album_id, limit=50, offset=offset)
+        all_items.extend(page["items"])
+        if not page.get("next"):
+            break
+        offset += len(page["items"])
+    return {"items": all_items}
 
 
 def get_track_details_batch(sp, track_ids, batch_size=50):
@@ -126,27 +164,36 @@ def get_playlist_tracks_all(sp, playlist_id):
     return items
 
 
-def get_playlist_track_names(sp, playlist_id) -> set[str]:
-    names = set()
+def get_playlist_track_uris(sp, playlist_id) -> set[str]:
+    uris = set()
     for item in get_playlist_tracks_all(sp, playlist_id):
-        if item.get("track"):
-            names.add(item["track"]["name"])
-    return names
+        track = item.get("track")
+        if track and track.get("uri"):
+            uris.add(track["uri"])
+    return uris
 
 
-def get_latest_release_date_from_playlist(sp, playlist_id):
-    latest_date = None
+def get_latest_release_date_from_playlist(sp, playlist_id) -> str | None:
+    """Newest album release_date among tracks already on the playlist."""
+    from date_utils import parse_release_date
+
     items = get_playlist_tracks_all(sp, playlist_id)
     log(f"Playlist has {len(items)} tracks")
 
+    latest = None
+    latest_parsed = None
     for item in items:
         track = item.get("track")
         if track and track.get("album"):
-            release_date = track["album"].get("release_date", "1900-01-01")
-            if latest_date is None or release_date > latest_date:
-                latest_date = release_date
+            raw = track["album"].get("release_date", "1900-01-01")
+            parsed = parse_release_date(raw)
+            if latest_parsed is None or parsed > latest_parsed:
+                latest_parsed = parsed
+                latest = raw
 
-    return latest_date
+    if latest:
+        log(f"Newest release on playlist: {latest}")
+    return latest
 
 
 def get_or_create_playlist(sp, artist_name):
